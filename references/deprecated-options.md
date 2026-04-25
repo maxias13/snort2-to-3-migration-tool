@@ -17,7 +17,7 @@ This reference lists Snort 2 keywords and patterns that are deprecated, removed,
 | `content:"..."; http_method;` | Snort 2 modifier style | `http_method; content:"...";` | Same conversion pattern |
 | `content:"..."; http_stat_code;` | Snort 2 modifier style | `http_stat_code; content:"...";` | Same conversion pattern |
 | `content:"..."; http_stat_msg;` | Snort 2 modifier style | `http_stat_msg; content:"...";` | Same conversion pattern |
-| `rawbytes;` | Deprecated modifier style | `pkt_data;` | Use sticky buffer per migration requirement |
+| `rawbytes;` | Deprecated modifier style | `raw_data;` (sticky buffer) | `raw_data;` ignores normalization (matches `rawbytes` semantics). Do NOT map to `pkt_data;` — `pkt_data;` returns to NORMALIZED packet data and changes detection behavior. |
 | `fast_pattern;` as standalone | Style change required | `content:"...",fast_pattern;` | Attach inline to owning content |
 | `nocase;` as standalone | Style change required | `content:"...",nocase;` | Attach inline to owning content |
 | `depth:N;` as separate option | Style change required | `content:"...",depth N;` | Keep semantics |
@@ -26,6 +26,16 @@ This reference lists Snort 2 keywords and patterns that are deprecated, removed,
 | `within:N;` as separate option | Style change required | `content:"...",within N;` | Keep semantics |
 | `drop` action | Migration policy change | `block` | Map for Snort 3 target profile |
 | `sdrop` action | Deprecated/removed in migration style | `block` | No direct `sdrop` equivalent in target output |
+| `sblock` action | Snort 2 alias for `sdrop` (manual §2.11.5) | `block` | Same as `sdrop`; convert to `block` |
+| `block` action (Snort 2) | Snort 2 alias for `drop` (manual §2.11.5) | `block` | Already valid in both; no transformation needed |
+| `resp` action | Snort 2 Flexible Response (`--enable-flexresp3`) | ⚠️ MANUAL REVIEW (no Snort 3 equivalent) | Flag for removal or substitute with `reject`/`react` |
+| `replace:"...";` (any action) | Snort 3 requires `rewrite` action | Change action to `rewrite` and keep `replace` | Snort 3 ties `replace` to the `rewrite` action specifically |
+| `urilen:N;` | No Snort 3 equivalent keyword | `http_uri; bufferlen:N;` | Use `http_raw_uri; bufferlen:N;` for `urilen:N,raw;` |
+| `file_data:mime;` | Deprecated argument (Snort 2 manual §3.5.28) | `file_data;` | Bare `file_data;` covers MIME-decoded attachments in Snort 3 |
+| `threshold:type ...;` (in-rule) | Deprecated (Snort 2 manual §3.8) | `detection_filter:track ...,count N,seconds M;` (in-rule) OR `event_filter` in `snort.lua` | Use `detection_filter` for per-rule, post-detection thresholding; use `event_filter` for config-level event suppression/limiting |
+| `flags:1;` | Legacy alias for CWR | `flags:C;` | Convert to canonical RFC 3168 letter |
+| `flags:2;` | Legacy alias for ECE | `flags:E;` | Convert to canonical RFC 3168 letter |
+| `flags:12;` | Legacy alias for CWR+ECE | `flags:CE;` | Convert to canonical letters |
 | `metadata: service http;` | Legacy service declaration style | `service:http;` | Use explicit keyword |
 | `!$VARIABLE` in destination IP | Compatibility issue in target style | destination IP `any` | Preserve detection by widening destination |
 
