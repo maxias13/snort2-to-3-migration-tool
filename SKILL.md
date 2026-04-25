@@ -181,6 +181,169 @@ When HTTP, DNS, SMTP, SIP, or file semantics are clearly present, add explicit s
 
 Do not add speculative service hints when traffic context is unclear.
 
+### 10) Service Rule Header Promotion
+
+Snort 3 supports service-in-header rules: `alert http (...)`, `alert dns (...)`, `alert smtp (...)`, etc. Promote a traditional-header rule to a service-header rule when:
+- The original Snort 2 rule uses HTTP/DNS/SMTP/etc. sticky buffers
+- The original `service:` keyword is present (or about to be added via §9)
+- Port specifications (`$HTTP_PORTS`, `25`, `53`) are redundant with the service
+
+Promotion drops the explicit protocol, IP, and port tuple in favor of the service:
+
+| Snort 2 (traditional) | Snort 3 (service rule) |
+|---|---|
+| `alert tcp ANY ANY -> $HTTP_SERVERS $HTTP_PORTS (... http_uri; ...)` | `alert http (... http_uri; ...)` |
+
+Service-header rules also bind detection earlier, improving fast-pattern selection.
+
+### 11) `urilen` Migration
+
+Snort 2 `urilen:[op]N[,norm|raw];` has no direct Snort 3 equivalent. Migrate using the corresponding HTTP buffer plus `bufferlen`:
+
+| Snort 2 | Snort 3 |
+|---|---|
+| `urilen:N;` | `http_uri; bufferlen:N;` |
+| `urilen:>N;` | `http_uri; bufferlen:>N;` |
+| `urilen:N,raw;` | `http_raw_uri; bufferlen:N;` |
+| `urilen:N<>M;` | `http_uri; bufferlen:N<>M;` |
+
+`bufferlen` operates on the current sticky buffer.
+
+### 12) `file_data:mime` Deprecation
+
+Snort 2 manual §3.5.28 deprecates the `mime` argument. Snort 3 uses bare `file_data;`:
+
+| Snort 2 | Snort 3 |
+|---|---|
+| `file_data:mime;` | `file_data;` |
+
+Snort 3 `file_data;` activates for HTTP, SMTP, POP3, IMAP, FTP-data, and SMB2 READ/WRITE buffers automatically.
+
+### 13) In-Rule `threshold` Deprecation
+
+Snort 2 manual §3.8 deprecates the in-rule `threshold` keyword. Migrate to:
+- `detection_filter:track by_src,count N,seconds M;` (in-rule, evaluated post-detection)
+- `event_filter` (in Snort 3 config, post-event suppression/limiting)
+
+| Snort 2 | Snort 3 |
+|---|---|
+| `threshold:type threshold,track by_src,count 100,seconds 5;` | `detection_filter:track by_src,count 100,seconds 5;` |
+| `threshold:type limit,track by_src,count 1,seconds 60;` | Configure `event_filter` in `snort.lua` |
+
+### 14) `flags:1` and `flags:2` Legacy Aliases
+
+Snort 2 accepts `1` and `2` as legacy aliases for TCP CWR and ECE flags. Migrate to the canonical letters per RFC 3168:
+
+| Snort 2 | Snort 3 |
+|---|---|
+| `flags:1;` | `flags:C;` (CWR) |
+| `flags:2;` | `flags:E;` (ECE) |
+| `flags:12;` | `flags:CE;` |
+
+### 15) `flowbits` Syntax Update
+
+Snort 3 changes `flowbits` group syntax:
+- Set/unset multiple bits: `&` separator (was implementation-specific in Snort 2)
+- Check multiple bits: `|` for any-of, `&` for all-of in `isset`/`isnotset`
+
+| Operation | Snort 2 | Snort 3 |
+|---|---|---|
+| Set multiple | `flowbits:set,a; flowbits:set,b;` | `flowbits:set,a&b;` |
+| Check any-of | (separate `isset` calls) | `flowbits:isset,a|b;` |
+| Check all-of | (separate `isset` calls) | `flowbits:isset,a&b;` |
+
+Source: snort3-rule-checker/references/rule-options.md.
+
+### 16) `fast_pattern` Eligibility Changes in Snort 3
+
+Snort 3 expands fast-pattern eligibility:
+- **Newly eligible** in Snort 3: `http_cookie`, `http_method` (were ineligible in Snort 2)
+- **Still ineligible** in Snort 3: `http_raw_cookie`, `http_param`, `http_raw_body`, `http_version`, `http_raw_request`, `http_raw_status`, `http_raw_trailer`, `http_true_ip`
+
+Migration impact: rules with `content:"x",fast_pattern; http_cookie;` were invalid in Snort 2 (and likely silently dropped fast_pattern); they become valid and effective in Snort 3.
+
+`fast_pattern:only` behavior also changed in Snort 3 — flag rules using `:only` for manual review.
+
+### 17) Sticky Buffer Reference (Snort 3 New Buffers)
+
+Snort 3 introduces buffers with no Snort 2 equivalent. Migration adds them as new detection capabilities, not as replacements:
+
+| Snort 3 Buffer | Purpose | Notes |
+|---|---|---|
+| `raw_data;` | Pre-normalization payload | Replacement for `rawbytes` |
+| `pkt_data;` | Cursor reset to normalized packet data | Snort 2 also had `pkt_data` |
+| `js_data;` | Normalized JavaScript | Requires `http_inspect.js_normalization_depth > 0` |
+| `vba_data;` | VBA macro buffer | Requires `decompress_zip` + `decompress_vba` |
+| `http_raw_body;` | De-chunked, decompressed, otherwise unnormalized body (request + response) | No Snort 2 equivalent |
+| `http_param:"name"[,nocase];` | URL query and `application/x-www-form-urlencoded` POST body params | No Snort 2 equivalent |
+| `http_version;` | HTTP version | No Snort 2 equivalent |
+| `http_raw_request;` | Raw request line | No Snort 2 equivalent |
+| `http_raw_status;` | Raw status line | No Snort 2 equivalent |
+| `http_trailer;` / `http_raw_trailer;` | HTTP trailer fields | No Snort 2 equivalent |
+| `http_true_ip;` | Original client IP from proxy-forward headers | No Snort 2 equivalent |
+
+### 18) New Snort 3 Keywords
+
+| Snort 3 Keyword | Purpose |
+|---|---|
+| `service:http;` | Explicit service binding |
+| `rem:"comment";` | In-rule comment metadata |
+| `bufferlen:[op]N[,relative];` | Length check on current sticky buffer (replaces `urilen`) |
+| `regex:"/pattern/flags"[,fast_pattern][,nocase];` | Hyperscan-backed regex; supports inline `fast_pattern` (which `pcre` does not) |
+| `sd_pattern` | Sensitive data detection (Hyperscan build required) |
+| `file_id` rule type | File signature detection |
+
+Snort 3 also adds CIP/ENIP, IEC104, MMS, S7CommPlus rule options for ICS/SCADA inspection. These are new capabilities, not migrations.
+
+### 19) `snort2lua` Converter
+
+Snort 3 ships a built-in converter for both config and rule files. Use it as a first-pass migration tool:
+
+```bash
+# Convert config
+snort2lua -c snort.conf
+
+# Convert rules file
+snort2lua -c in.rules -r out.rules
+
+# Output errors go to snort.rej
+```
+
+Limitations:
+- Not all Snort 2 constructs convert cleanly; review `snort.rej` for failed lines
+- `snort2lua` produces functional Snort 3 rules but may not apply best-practice service-header promotion or new sticky buffers
+- Run this skill's transformation passes after `snort2lua` to refine output
+
+Source: Snort 3 official docs (print.txt §872-887, §1042-1059).
+
+### 20) Config File Format Migration
+
+Snort 3 replaces the text-based `snort.conf` with Lua-based `snort.lua`. Modules are configured as Lua table literals:
+
+```lua
+http_inspect = {
+  request_depth = 4096,
+  response_depth = 4096,
+  js_normalization_depth = 65536,
+}
+
+stream_tcp = {
+  policy = 'bsd',  -- same default as Snort 2 frag3
+}
+```
+
+Use `snort2lua -c snort.conf` to bootstrap the conversion.
+
+### 21) Preprocessor → Inspector Migration
+
+| Snort 2 Preprocessor | Snort 3 Inspector(s) | Notes |
+|---|---|---|
+| `frag3` | Built-in IP defragmentation; OS policy via `stream_tcp.policy` | Default `'bsd'` matches Snort 2 frag3 default |
+| `stream5` | `stream_tcp`, `stream_udp`, `stream_ip`, `stream_icmp` | Split into per-protocol modules |
+| `http_inspect` | `http_inspect` | Same name, new Lua schema |
+| `ftp_telnet` | `ftp_server`, `ftp_client`, `telnet` | Split into per-protocol inspectors |
+| `threshold.conf` | Built-in `event_filter`, `suppress`, `rate_filter` in `snort.lua` | Move from external file to inline Lua config |
+
 ---
 
 ## Migration Report Format (Per Rule)
