@@ -83,12 +83,90 @@ This reference focuses on rule-writing differences that matter during migration.
 
 Use this quick checklist after transforming a rule:
 
-1. Header is syntactically valid for Snort 3.
-2. Action is valid and aligned with migration policy (`drop`/`sdrop` converted to `block`).
-3. `uricontent` has been removed.
+1. Header is syntactically valid for Snort 3 (consider promoting to a service header — e.g. `alert http (...)` — when app protocol is known).
+2. Action is valid and aligned with migration policy (`drop`/`sdrop`/`sblock` converted to `block`; `replace` rules converted to `rewrite` action).
+3. `uricontent` has been removed (replaced by `http_uri; content:`).
 4. HTTP buffer modifiers were converted to sticky buffers.
 5. `content` modifiers are inline.
-6. Legacy PCRE HTTP buffer flags were removed and replaced with sticky buffers.
+6. Legacy PCRE HTTP buffer flags were removed and replaced with sticky buffers (`C`→`http_cookie;`, `K`→`http_raw_cookie;`, `B`→`raw_data;`).
 7. Destination negated variable incompatibilities were normalized to `any`.
 8. Output rule keeps `sid` and `rev`.
 9. Rule remains pure ASCII.
+10. `rawbytes` was converted to `raw_data;` (NOT `pkt_data;`).
+11. `urilen:N` was converted to `http_uri; bufferlen:N`.
+12. `file_data:mime` was converted to plain `file_data;`.
+13. In-rule `threshold:type ...` was converted to `detection_filter` (per-rule) or moved to `event_filter`/`rate_filter` in `snort.lua` (global).
+14. `flags:1` / `flags:2` legacy aliases were replaced with `C` / `E`.
+15. `fast_pattern:only` placements were reviewed — Snort 3 evaluates the rule even when the fast-pattern matches; behavior differences should be confirmed.
+16. PCRE `B` flag was replaced by `raw_data;` sticky buffer + plain `pcre`; PCRE `O` flag occurrences were reviewed (overrides match limit, avoid in production).
+17. `resp` rules were flagged for manual redesign (no Snort 3 equivalent).
+
+## 10) Infrastructure Migration
+
+Rule files are only one half of a Snort 2 → Snort 3 migration. The runtime configuration must move from `snort.conf` to `snort.lua`, and preprocessors must be replaced by inspectors.
+
+### 10.1 Configuration Format
+
+| Snort 2 | Snort 3 | Notes |
+|---|---|---|
+| `snort.conf` (custom DSL) | `snort.lua` (Lua table literals) | Inspector params become Lua table fields |
+| `var HOME_NET ...`, `ipvar`, `portvar` | `HOME_NET = '...'` Lua assignments | IP/port variables become Lua strings or tables |
+| `include classification.config` | `include 'classification.lua'` | Helper files also Lua |
+| `output unified2: ...` | `alert_csv = { ... }`, `alert_fast = { ... }`, `unified2 = { ... }` | Outputs are inspector-style Lua tables |
+
+### 10.2 Preprocessor → Inspector Mapping
+
+| Snort 2 Preprocessor | Snort 3 Inspector(s) | Notes |
+|---|---|---|
+| `frag3` | `stream_ip` (defragmentation moved into stream) | Policy field (`bsd`, `linux`, `windows`, ...) preserved |
+| `stream5` | `stream`, `stream_tcp`, `stream_udp`, `stream_ip`, `stream_icmp`, `stream_user`, `stream_file` | Per-protocol inspectors; `stream_tcp.policy` default is `bsd` |
+| `http_inspect` (Snort 2) | `http_inspect` (Snort 3, redesigned with new schema) | NHI; many new fields including `js_normalization_depth`, `decompress_zip`, `decompress_vba` |
+| `ftp_telnet` | `ftp_server`, `ftp_client`, `telnet` | Split into separate inspectors |
+| `dns`, `ssl`, `sip`, `dnp3`, `modbus`, `imap`, `pop`, `smtp` | Same names as inspectors | Mostly direct rename with Lua schema |
+| `threshold.conf` | `event_filter`, `suppress`, `rate_filter` in `snort.lua` | In-rule `threshold` also moved to `detection_filter` |
+| `reputation` | `reputation` inspector | Schema rewritten in Lua |
+
+### 10.3 `snort2lua` Converter
+
+Snort 3 ships with a `snort2lua` tool to automate most of the conversion.
+
+| Use | Command |
+|---|---|
+| Convert config | `snort2lua -c snort.conf -o snort.lua` |
+| Convert rules | `snort2lua -c in.rules -r out.rules` |
+| Convert both | `snort2lua -c snort.conf -r in.rules -o snort.lua` |
+| Strict mode | `snort2lua --error-mode -c snort.conf -o snort.lua` |
+
+Errors are written to `snort.rej`. Limitations: not every Snort 2 construct converts cleanly — review `snort.rej` and handle the rules above (`rawbytes`, `urilen`, in-rule `threshold`, `resp`, `replace`, `sblock`, etc.) manually.
+
+## 11) New Snort 3 Rule Types
+
+Beyond the traditional `alert tcp ...` style, Snort 3 introduces purpose-built rule headers.
+
+### 11.1 Service Rules
+
+```snort
+alert http (msg:"HTTP attack"; flow:to_server,established; http_uri; content:"/exploit"; sid:1000001; rev:1;)
+alert smtp (msg:"SMTP MIME"; flow:to_server,established; file_data; content:"EICAR"; sid:1000002; rev:1;)
+alert ssl  (msg:"SSL probe"; ssl_state:client_hello; sid:1000003; rev:1;)
+alert dns  (msg:"DNS exfil"; dns_query:"badc2.example.com"; sid:1000004; rev:1;)
+```
+
+Service rules dispatch via the inspector regardless of port. Use them whenever the rule depends on protocol-aware buffers.
+
+### 11.2 File Rules
+
+```snort
+alert file (msg:"Malware EICAR"; file_data; content:"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR"; sid:1000010; rev:1;)
+```
+
+File rules match across protocols once the file inspector reassembles a file (HTTP download, SMTP attachment, SMB transfer, FTP-DATA).
+
+### 11.3 `file_id` Rules
+
+```snort
+file_id (msg:"PE download"; file_meta:type PE,id 1,category executable; file_data; content:"MZ",depth 2; sid:1000020; rev:1;)
+file_id (msg:"PDF download"; file_meta:type PDF,id 2,category document; file_data; content:"%PDF-",depth 5; sid:1000021; rev:1;)
+```
+
+`file_id` rules declare file types via `file_meta` so the file inspector can label and act on identified files.
