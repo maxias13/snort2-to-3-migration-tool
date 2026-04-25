@@ -122,23 +122,34 @@ Snort 2 modifier style to Snort 3 sticky + inline style:
 
 ### 5) Raw Buffer Handling
 
-| Snort 2 | Snort 3 |
-|---|---|
-| `rawbytes;` | `pkt_data;` |
+| Snort 2 | Snort 3 | Notes |
+|---|---|---|
+| `rawbytes;` (content modifier) | `raw_data;` (sticky buffer) | `raw_data;` is the semantic replacement: it ignores preprocessing/normalization, matching the original `rawbytes` intent (e.g., Telnet NOP detection). |
+| `pkt_data;` | `pkt_data;` | Snort 3 cursor-reset buffer that returns to **normalized** packet data. NOT the rawbytes replacement — using it instead of `raw_data;` changes detection behavior for rules that bypassed normalization. |
 
-Note: Snort 3 also supports `raw_data;`, but this migration skill uses `pkt_data;` per required mapping.
+Source: snort3-rule-checker rule-options.md; Snort 3 official docs (print.txt §5838-5849).
 
 ### 6) PCRE Buffer Flag Migration
 
-Convert buffer flags into explicit sticky buffers and remove legacy buffer flags from `pcre`:
+Convert all 10 Snort 2 HTTP buffer flags into explicit sticky buffers and remove legacy buffer flags from `pcre`:
 
-| Snort 2 PCRE Flag | Snort 3 Sticky Buffer |
-|---|---|
-| `U` | `http_uri;` |
-| `H` | `http_header;` |
-| `P` | `http_client_body;` |
-| `C` | `http_raw_cookie;` |
-| `I` | `http_raw_uri;` |
+| Snort 2 PCRE Flag | Meaning | Snort 3 Sticky Buffer |
+|---|---|---|
+| `U` | Normalized URI | `http_uri;` |
+| `I` | Raw URI | `http_raw_uri;` |
+| `H` | Normalized header | `http_header;` |
+| `D` | Raw header | `http_raw_header;` |
+| `M` | HTTP method | `http_method;` |
+| `P` | Normalized request body | `http_client_body;` |
+| `C` | Normalized cookie | `http_cookie;` |
+| `K` | Raw cookie | `http_raw_cookie;` |
+| `S` | HTTP status code | `http_stat_code;` |
+| `Y` | HTTP status message | `http_stat_msg;` |
+
+PCRE non-buffer flags requiring attention:
+- `B` (rawbytes inside PCRE) → remove flag and use `raw_data;` sticky buffer before `pcre`
+- `R` (relative) → preserve when relative match logic is intentional
+- `O` (override match limit) → flag for manual review; overrides `pcre_match_limit`; avoid in production rules
 
 Example:
 - Before: `pcre:"/admin/iU";`
