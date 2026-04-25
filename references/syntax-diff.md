@@ -17,9 +17,11 @@ This reference focuses on rule-writing differences that matter during migration.
 | Topic | Snort 2 | Snort 3 | Migration Impact |
 |---|---|---|---|
 | IDS actions | `alert`, `log`, `pass` | `alert`, `log`, `pass` | No major change |
-| IPS drop | `drop` | `block` and `drop` both exist in broader docs, but migration target maps to `block` | Convert `drop` to `block` for consistent migration policy |
-| Silent drop | `sdrop` | Not used in Snort 3 migration style | Convert `sdrop` to `block` |
-| Active responses | `reject`, `react`, `resp` usage patterns | `reject`, `react` supported with Snort 3 behavior | Validate deployment mode before preserving behavior |
+| IPS drop (current packet) | `drop` | `drop` exists; affects only the current packet | Map to `block` if flow-level drop semantics are desired |
+| IPS block (flow-level) | `block` (alias for `drop` in Snort 2) | `block` drops current packet AND blocks subsequent packets in the flow | Distinct from `drop` in Snort 3; choose intentionally |
+| Silent drop | `sdrop`, `sblock` | Removed; use `block` (suppress alerting via `event_filter`/`suppress` in `snort.lua`) | Convert `sdrop` and `sblock` to `block` |
+| Stream rewriting | `replace:"..."` content modifier (any action) | `replace` requires `rewrite` action header | Change action to `rewrite` when `replace` is present |
+| Active responses | `reject`, `react`, `resp` | `reject`, `react` supported; `resp` (Flexible Response) has NO Snort 3 equivalent — manual review required | `resp` rules must be redesigned around `reject` or stream rewriting |
 
 ## 3) Rule Body and Option Style
 
@@ -45,8 +47,8 @@ This reference focuses on rule-writing differences that matter during migration.
 |---|---|---|---|
 | HTTP buffer selection | Often used as content modifiers (`content:"x"; http_uri;`) | Sticky buffers set first (`http_uri; content:"x";`) | Reorder to sticky-buffer-first pattern |
 | URI keyword | `uricontent` legacy keyword | Use `http_uri; content:` pattern | Replace every `uricontent` occurrence |
-| Raw bytes handling | `rawbytes` content modifier | Sticky buffer model (`pkt_data;` or `raw_data;`) | Convert to sticky buffer keyword |
-| Cursor reset | `pkt_data` exists | `pkt_data` remains and is central to sticky transitions | Add explicitly when returning from sticky buffers |
+| Raw bytes handling | `rawbytes` content modifier | `raw_data;` sticky buffer ONLY (NOT `pkt_data;`) | Convert every `rawbytes` to a `raw_data;` sticky buffer placed before the content it scopes |
+| Cursor reset | `pkt_data` exists | `pkt_data;` is the cursor-reset / normalized payload buffer — distinct from `raw_data;` | Use `pkt_data;` when returning from a sticky buffer to scan normalized payload, not as a `rawbytes` replacement |
 
 ## 6) PCRE and Regex Model
 
