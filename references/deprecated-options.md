@@ -46,14 +46,18 @@ Snort 2 commonly used HTTP buffer selectors inside PCRE flags. In Snort 3 migrat
 | Snort 2 PCRE Flag | Meaning in Snort 2 | Snort 3 Handling |
 |---|---|---|
 | `U` | normalized URI buffer | Add `http_uri;` before `pcre`, then remove `U` |
-| `H` | normalized header buffer | Add `http_header;` before `pcre`, then remove `H` |
-| `P` | normalized request body | Add `http_client_body;` before `pcre`, then remove `P` |
-| `C` | cookie buffer | Add `http_raw_cookie;` before `pcre`, then remove `C` |
 | `I` | raw URI buffer | Add `http_raw_uri;` before `pcre`, then remove `I` |
+| `H` | normalized header buffer | Add `http_header;` before `pcre`, then remove `H` |
 | `D` | raw header buffer | Add `http_raw_header;` before `pcre`, then remove `D` |
-| `K` | raw cookie buffer variant | Add `http_raw_cookie;` before `pcre`, then remove `K` |
+| `M` | HTTP method buffer | Add `http_method;` before `pcre`, then remove `M` |
+| `P` | normalized request body | Add `http_client_body;` before `pcre`, then remove `P` |
+| `C` | normalized cookie buffer | Add `http_cookie;` before `pcre`, then remove `C` (**not** `http_raw_cookie;` — `C` is the normalized variant) |
+| `K` | raw cookie buffer | Add `http_raw_cookie;` before `pcre`, then remove `K` |
 | `S` | HTTP status code buffer | Add `http_stat_code;` before `pcre`, then remove `S` |
 | `Y` | HTTP status message buffer | Add `http_stat_msg;` before `pcre`, then remove `Y` |
+| `B` | rawbytes inside PCRE | Add `raw_data;` (sticky buffer) before `pcre`, then remove `B` |
+| `R` | relative match | Preserve when relative semantics are intentional |
+| `O` | override `pcre_match_limit` | ⚠️ MANUAL REVIEW — flag for review; avoid in production rules |
 
 ### PCRE migration example
 
@@ -89,18 +93,27 @@ Use metadata for descriptive context, not as a substitute for explicit semantic 
 
 These are not always invalid, but should be reviewed in every migration:
 
-1. `replace` usage when rule action is not explicitly rewrite-compatible in deployment policy.
+1. `replace` usage — Snort 3 requires the dedicated `rewrite` action when `replace:"...";` is present. Change action to `rewrite` (not just any inline-capable action).
 2. `flowbits` dependencies across separate SIDs (ordering and state assumptions).
 3. Complex `pcre` expressions with multiple legacy buffer flags.
 4. Destination negation patterns converted to `any` that may broaden scope significantly.
+5. `fast_pattern:only` usage — behavior changed between Snort 2 and Snort 3; review match semantics.
+6. `resp` action — no Snort 3 equivalent; flag for removal or `reject`/`react` substitution.
 
 ## Quick Conversion Checklist
 
 1. Remove `uricontent` and migrate to `http_uri; content:`.
 2. Convert Snort 2 HTTP modifiers to sticky buffers.
 3. Convert standalone content modifiers to inline style.
-4. Convert `drop` and `sdrop` to `block`.
+4. Convert `drop`, `sdrop`, and `sblock` actions to `block`.
 5. Convert legacy service metadata to explicit `service:`.
 6. Replace incompatible destination `!$VARIABLE` with `any`.
-7. Strip Snort 2 HTTP PCRE buffer flags after adding sticky buffer context.
-8. Review `dsize` and `flags` semantics for stream-safe intent.
+7. Strip Snort 2 HTTP PCRE buffer flags after adding sticky buffer context (note: `C` → `http_cookie;`, `K` → `http_raw_cookie;`).
+8. Convert `rawbytes;` content modifier to `raw_data;` sticky buffer (NOT `pkt_data;`).
+9. Convert `urilen:N;` to `http_uri; bufferlen:N;`.
+10. Convert `file_data:mime;` to `file_data;`.
+11. Convert in-rule `threshold:type ...;` to `detection_filter:track ...;` or `event_filter` in `snort.lua`.
+12. Convert `flags:1;`/`flags:2;`/`flags:12;` legacy aliases to `flags:C;`/`flags:E;`/`flags:CE;`.
+13. Change action to `rewrite` when `replace:"...";` is present.
+14. Review `dsize` and `flags` semantics for stream-safe intent.
+15. Review `fast_pattern:only` for Snort 3 behavior differences.
